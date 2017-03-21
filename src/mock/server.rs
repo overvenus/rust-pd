@@ -63,20 +63,20 @@ impl<C: Case, H: Case> PDAsync for Mock<C, H> {
         unimplemented!()
     }
 
-    fn Bootstrap(&self, _: BootstrapRequest) -> GrpcFutureSend<BootstrapResponse> {
-        futures::future::err(GrpcError::Other("unimpl")).boxed()
+    fn Bootstrap(&self, req: BootstrapRequest) -> GrpcFutureSend<BootstrapResponse> {
+        try_takeover!(self.Bootstrap(&req))
     }
 
-    fn IsBootstrapped(&self, _: IsBootstrappedRequest) -> GrpcFutureSend<IsBootstrappedResponse> {
-        futures::future::err(GrpcError::Other("unimpl")).boxed()
+    fn IsBootstrapped(&self, req: IsBootstrappedRequest) -> GrpcFutureSend<IsBootstrappedResponse> {
+        try_takeover!(self.IsBootstrapped(&req))
     }
 
-    fn AllocID(&self, _: AllocIDRequest) -> GrpcFutureSend<AllocIDResponse> {
-        futures::future::err(GrpcError::Other("unimpl")).boxed()
+    fn AllocID(&self, req: AllocIDRequest) -> GrpcFutureSend<AllocIDResponse> {
+        try_takeover!(self.AllocID(&req))
     }
 
-    fn GetStore(&self, _: GetStoreRequest) -> GrpcFutureSend<GetStoreResponse> {
-        futures::future::err(GrpcError::Other("unimpl")).boxed()
+    fn GetStore(&self, req: GetStoreRequest) -> GrpcFutureSend<GetStoreResponse> {
+        try_takeover!(self.GetStore(&req))
     }
 
     fn PutStore(&self, _: PutStoreRequest) -> GrpcFutureSend<PutStoreResponse> {
@@ -97,8 +97,8 @@ impl<C: Case, H: Case> PDAsync for Mock<C, H> {
         futures::future::err(GrpcError::Other("unimpl")).boxed()
     }
 
-    fn GetRegionByID(&self, _: GetRegionByIDRequest) -> GrpcFutureSend<GetRegionResponse> {
-        futures::future::err(GrpcError::Other("unimpl")).boxed()
+    fn GetRegionByID(&self, req: GetRegionByIDRequest) -> GrpcFutureSend<GetRegionResponse> {
+        try_takeover!(self.GetRegionByID(&req))
     }
 
     fn AskSplit(&self, _: AskSplitRequest) -> GrpcFutureSend<AskSplitResponse> {

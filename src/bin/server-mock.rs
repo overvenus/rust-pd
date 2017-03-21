@@ -21,9 +21,9 @@ fn main() {
     let se = Arc::new(Service::new(eps.clone()));
     let lc = Arc::new(Split::new(eps));
 
-    let _server_a = MockServer::run("127.0.0.1:42379", se.clone(), Some(lc.clone()));
-    let _server_b = MockServer::run("127.0.0.1:52379", se.clone(), Some(lc.clone()));
-    let _server_c = MockServer::run("127.0.0.1:62379", se.clone(), Some(lc.clone()));
+    let _server_a = MockServer::run("127.0.0.1:42379", se.clone(), Some(se.clone()));
+    let _server_b = MockServer::run("127.0.0.1:52379", se.clone(), Some(se.clone()));
+    let _server_c = MockServer::run("127.0.0.1:62379", se.clone(), Some(se.clone()));
 
     loop {
         thread::park()
