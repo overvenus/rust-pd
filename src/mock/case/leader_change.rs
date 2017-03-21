@@ -6,6 +6,7 @@ use protobuf::RepeatedField;
 use kvproto::pdpb::{Member, GetMembersRequest, GetMembersResponse, ResponseHeader};
 
 use super::Case;
+use super::Result;
 
 #[derive(Debug)]
 struct Roulette {
@@ -68,7 +69,7 @@ const DEAD_NAME: &'static str = "walking_dead";
 const DEAD_URL: &'static str = "http://127.0.0.1:65534";
 
 impl Case for LeaderChange {
-    fn GetMembers(&self, _: GetMembersRequest) -> Option<GetMembersResponse> {
+    fn GetMembers(&self, _: &GetMembersRequest) -> Option<Result<GetMembersResponse>> {
         let mut r = self.r.lock().unwrap();
 
         let now = Instant::now();
@@ -76,9 +77,8 @@ impl Case for LeaderChange {
             r.idx += 1;
             r.ts = now;
         }
-        panic!("test");
         info!("[LeaderChange] GetMembers: {:?}",
               self.resps[r.idx % self.resps.len()]);
-        Some(self.resps[r.idx % self.resps.len()].clone())
+        Some(Ok(self.resps[r.idx % self.resps.len()].clone()))
     }
 }

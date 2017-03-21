@@ -17,25 +17,46 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn run<A: ToSocketAddrs, C: Case + Send + Sync + 'static>(addr: A, case: Arc<C>) -> Server {
-        let m = Mock { case: case };
+    pub fn run<A, H, C>(addr: A, handler: Arc<H>, case: Option<Arc<C>>) -> Server
+        where A: ToSocketAddrs,
+              H: Case + Send + Sync + 'static,
+              C: Case + Send + Sync + 'static
+    {
+        let m = Mock {
+            handler: handler,
+            case: case,
+        };
         Server { _server: PDAsyncServer::new(addr, Default::default(), m) }
     }
 }
 
-#[derive(Debug)]
-struct Mock<C: Case> {
-    case: Arc<C>,
+macro_rules! try_takeover {
+    ($sel:ident.$method:ident($($arg:expr),*)) => ({
+        if let Some(ref case) = $sel.case {
+            match case.$method($($arg),*) {
+                Some(Ok(resp)) => return futures::future::ok(resp).boxed(),
+                Some(Err(err)) => return futures::future::err(err).boxed(),
+                _ => (),
+            }
+        }
+
+        match $sel.handler.$method($($arg),*) {
+            Some(Ok(resp)) => futures::future::ok(resp).boxed(),
+            Some(Err(err)) => futures::future::err(err).boxed(),
+            _ => futures::future::err(GrpcError::Other("unimpl")).boxed(),
+        }
+    })
 }
 
-impl<C: Case> PDAsync for Mock<C> {
-    fn GetMembers(&self, req: GetMembersRequest) -> GrpcFutureSend<GetMembersResponse> {
-        let resp = match self.case.GetMembers(req) {
-            Some(resp) => resp,
-            None => unimplemented!(),
-        };
+#[derive(Debug)]
+struct Mock<C: Case, H: Case> {
+    handler: Arc<H>,
+    case: Option<Arc<C>>,
+}
 
-        futures::future::ok(resp).boxed()
+impl<C: Case, H: Case> PDAsync for Mock<C, H> {
+    fn GetMembers(&self, req: GetMembersRequest) -> GrpcFutureSend<GetMembersResponse> {
+        try_takeover!(self.GetMembers(&req))
     }
 
     fn Tso(&self, _: GrpcStreamSend<TsoRequest>) -> GrpcStreamSend<TsoResponse> {

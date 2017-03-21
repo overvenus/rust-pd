@@ -1,68 +1,85 @@
 #![allow(non_snake_case)]
 
+use std::result;
+
+use grpc::error::GrpcError;
+
 use kvproto::pdpb::*;
 
+mod service;
+mod split;
 mod leader_change;
+
+pub use self::service::Service;
+pub use self::split::Split;
 pub use self::leader_change::LeaderChange;
 
+pub type Result<T> = result::Result<T, GrpcError>;
+
 pub trait Case {
-    fn GetMembers(&self, _: GetMembersRequest) -> Option<GetMembersResponse> {
+    fn GetMembers(&self, _: &GetMembersRequest) -> Option<Result<GetMembersResponse>> {
         None
     }
 
-    fn Tso(&self, _: TsoRequest) -> Option<TsoResponse> {
+    fn Tso(&self, _: &TsoRequest) -> Option<Result<TsoResponse>> {
         None
     }
 
-    fn Bootstrap(&self, _: BootstrapRequest) -> Option<BootstrapResponse> {
+    fn Bootstrap(&self, _: &BootstrapRequest) -> Option<Result<BootstrapResponse>> {
         None
     }
 
-    fn IsBootstrapped(&self, _: IsBootstrappedRequest) -> Option<IsBootstrappedResponse> {
+    fn IsBootstrapped(&self, _: &IsBootstrappedRequest) -> Option<Result<IsBootstrappedResponse>> {
         None
     }
 
-    fn AllocID(&self, _: AllocIDRequest) -> Option<AllocIDResponse> {
+    fn AllocID(&self, _: &AllocIDRequest) -> Option<Result<AllocIDResponse>> {
         None
     }
 
-    fn GetStore(&self, _: GetStoreRequest) -> Option<GetStoreResponse> {
+    fn GetStore(&self, _: &GetStoreRequest) -> Option<Result<GetStoreResponse>> {
         None
     }
 
-    fn PutStore(&self, _: PutStoreRequest) -> Option<PutStoreResponse> {
+    fn PutStore(&self, _: &PutStoreRequest) -> Option<Result<PutStoreResponse>> {
         None
     }
 
-    fn StoreHeartbeat(&self, _: StoreHeartbeatRequest) -> Option<StoreHeartbeatResponse> {
+    fn StoreHeartbeat(&self, _: &StoreHeartbeatRequest) -> Option<Result<StoreHeartbeatResponse>> {
         None
     }
 
-    fn RegionHeartbeat(&self, _: RegionHeartbeatRequest) -> Option<RegionHeartbeatResponse> {
+    fn RegionHeartbeat(&self,
+                       _: &RegionHeartbeatRequest)
+                       -> Option<Result<RegionHeartbeatResponse>> {
         None
     }
 
-    fn GetRegion(&self, _: GetRegionRequest) -> Option<GetRegionResponse> {
+    fn GetRegion(&self, _: &GetRegionRequest) -> Option<Result<GetRegionResponse>> {
         None
     }
 
-    fn GetRegionByID(&self, _: GetRegionByIDRequest) -> Option<GetRegionResponse> {
+    fn GetRegionByID(&self, _: &GetRegionByIDRequest) -> Option<Result<GetRegionResponse>> {
         None
     }
 
-    fn AskSplit(&self, _: AskSplitRequest) -> Option<AskSplitResponse> {
+    fn AskSplit(&self, _: &AskSplitRequest) -> Option<Result<AskSplitResponse>> {
         None
     }
 
-    fn ReportSplit(&self, _: ReportSplitRequest) -> Option<ReportSplitResponse> {
+    fn ReportSplit(&self, _: &ReportSplitRequest) -> Option<Result<ReportSplitResponse>> {
         None
     }
 
-    fn GetClusterConfig(&self, _: GetClusterConfigRequest) -> Option<GetClusterConfigResponse> {
+    fn GetClusterConfig(&self,
+                        _: &GetClusterConfigRequest)
+                        -> Option<Result<GetClusterConfigResponse>> {
         None
     }
 
-    fn PutClusterConfig(&self, _: PutClusterConfigRequest) -> Option<PutClusterConfigResponse> {
+    fn PutClusterConfig(&self,
+                        _: &PutClusterConfigRequest)
+                        -> Option<Result<PutClusterConfigResponse>> {
         None
     }
 }
