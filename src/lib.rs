@@ -1,3 +1,6 @@
+#![cfg_attr(feature="dev", feature(plugin))]
+#![cfg_attr(feature="dev", plugin(clippy))]
+
 extern crate kvproto;
 extern crate grpc;
 extern crate protobuf;
@@ -19,4 +22,6 @@ extern crate quick_error;
 pub mod util;
 
 pub mod mock;
+
+#[allow(module_inception)]
 pub mod client;
