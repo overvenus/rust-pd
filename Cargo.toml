@@ -12,6 +12,9 @@ name = "server-mock"
 [[bin]]
 name = "client"
 
+[[test]]
+name = "tests"
+
 [features]
 default = []
 dev = ["clippy"]
@@ -42,4 +45,4 @@ git = "https://github.com/pingcap/grpc-rust.git"
 [dependencies.prometheus]
 git = "https://github.com/pingcap/rust-prometheus.git"
 default-features = false
-features = ["nightly", "push"]
+features = ["nightly"]

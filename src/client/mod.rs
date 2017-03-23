@@ -13,14 +13,15 @@
 
 use std::vec::Vec;
 
-// mod aclient;
-mod client;
+#[allow(dead_code)]
+mod async;
+mod sync;
 mod metrics;
 
 pub mod errors;
 pub use self::errors::{Result, Error};
-pub use self::client::RpcClient;
-pub use self::client::validate_endpoints;
+pub use self::sync::RpcClient;
+pub use self::sync::validate_endpoints;
 
 use kvproto::metapb;
 use kvproto::pdpb;
@@ -103,28 +104,28 @@ pub trait PdClient: Send + Sync {
     fn report_split(&self, left: metapb::Region, right: metapb::Region) -> Result<()>;
 }
 
-// use futures::BoxFuture;
+use futures::BoxFuture;
 
-// pub type PdFuture<T> = BoxFuture<T, Error>;
+pub type PdFuture<T> = BoxFuture<T, Error>;
 
-// pub trait AsyncPdClient {
-//     // Get region by region id.
-//     fn get_region_by_id(&self, region_id: u64) -> PdFuture<metapb::Region>;
+pub trait AsyncPdClient {
+    // Get region by region id.
+    fn get_region_by_id(&self, region_id: u64) -> PdFuture<metapb::Region>;
 
-//     // Leader for a region will use this to heartbeat Pd.
-//     fn region_heartbeat(&self,
-//                         region: metapb::Region,
-//                         leader: metapb::Peer,
-//                         down_peers: Vec<pdpb::PeerStats>,
-//                         pending_peers: Vec<metapb::Peer>)
-//                         -> PdFuture<pdpb::RegionHeartbeatResponse>;
+    // Leader for a region will use this to heartbeat Pd.
+    fn region_heartbeat(&self,
+                        region: metapb::Region,
+                        leader: metapb::Peer,
+                        down_peers: Vec<pdpb::PeerStats>,
+                        pending_peers: Vec<metapb::Peer>)
+                        -> PdFuture<pdpb::RegionHeartbeatResponse>;
 
-//     // Ask pd for split, pd will returns the new split region id.
-//     fn ask_split(&self, region: metapb::Region) -> PdFuture<pdpb::AskSplitResponse>;
+    // Ask pd for split, pd will returns the new split region id.
+    fn ask_split(&self, region: metapb::Region) -> PdFuture<pdpb::AskSplitResponse>;
 
-//     // Send store statistics regularly.
-//     fn store_heartbeat(&self, stats: pdpb::StoreStats) -> PdFuture<()>;
+    // Send store statistics regularly.
+    fn store_heartbeat(&self, stats: pdpb::StoreStats) -> PdFuture<()>;
 
-//     // Report pd the split region.
-//     fn report_split(&self, left: metapb::Region, right: metapb::Region) -> PdFuture<()>;
-// }
+    // Report pd the split region.
+    fn report_split(&self, left: metapb::Region, right: metapb::Region) -> PdFuture<()>;
+}

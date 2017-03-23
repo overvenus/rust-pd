@@ -23,5 +23,6 @@ pub mod util;
 
 pub mod mock;
 
-#[allow(module_inception)]
 pub mod client;
+
+pub use self::client::{PdClient, RpcClient, validate_endpoints};

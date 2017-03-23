@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2017 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ use std::time::Duration;
 use std::collections::HashSet;
 
 use grpc;
-use grpc::futures_grpc::GrpcFutureSend;
 
 use protobuf::RepeatedField;
 
@@ -27,34 +26,35 @@ use url::Url;
 
 use rand::{self, Rng};
 
-use kvproto::{metapb, pdpb};
-use kvproto::pdpb_grpc::{self, PD};
-use kvproto::pdpb_grpc::{PDAsync, PDAsyncClient};
+use kvproto::metapb;
+use kvproto::pdpb::{self, GetMembersResponse, Member};
+use kvproto::pdpb_grpc::{PD, PDClient};
 
-use futures;
-
-use super::{Result, PdClient, AsyncPdClient, PdFuture};
+use super::{Result, Error, PdClient};
 use super::metrics::*;
 
 struct Inner {
-    members: pdpb::GetMembersResponse,
-    client: PDAsyncClient,
+    members: GetMembersResponse,
+    client: PDClient,
 }
 
-pub struct RpcClient {
+pub struct RpcAsyncClient {
     cluster_id: u64,
     inner: RwLock<Inner>,
 }
 
-impl RpcClient {
-    pub fn new(endpoints: &str) -> Result<RpcClient> {
+impl RpcAsyncClient {
+    pub fn new(endpoints: &str) -> Result<RpcAsyncClient> {
         let endpoints: Vec<_> = endpoints.split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
+            .map(|s| if !s.starts_with("http://") {
+                format!("http://{}", s)
+            } else {
+                s.to_owned()
+            })
             .collect();
 
         let (client, members) = try!(validate_endpoints(&endpoints));
-        Ok(RpcClient {
+        Ok(RpcAsyncClient {
             cluster_id: members.get_header().get_cluster_id(),
             inner: RwLock::new(Inner {
                 members: members,
@@ -68,15 +68,15 @@ impl RpcClient {
         header.set_cluster_id(self.cluster_id);
         header
     }
+
+    // For tests
+    pub fn get_leader(&self) -> Member {
+        let inner = self.inner.read().unwrap();
+        inner.members.get_leader().clone()
+    }
 }
 
-fn get_members(client: &PDAsyncClient) -> Result<pdpb::GetMembersResponse> {
-    let req = pdpb::GetMembersRequest::new();
-    futures::Future::wait(client.GetMembers(req)).map_err(|e| box_err!(e))
-}
-
-pub fn validate_endpoints(endpoints: &[&str])
-                          -> Result<(pdpb_grpc::PDAsyncClient, pdpb::GetMembersResponse)> {
+pub fn validate_endpoints(endpoints: &[String]) -> Result<(PDClient, GetMembersResponse)> {
     if endpoints.is_empty() {
         return Err(box_err!("empty PD endpoints"));
     }
@@ -100,7 +100,7 @@ pub fn validate_endpoints(endpoints: &[&str])
             }
         };
 
-        let resp = match get_members(&client) {
+        let resp = match client.GetMembers(pdpb::GetMembersRequest::new()) {
             Ok(resp) => resp,
             // Ignore failed PD node.
             Err(e) => {
@@ -127,90 +127,81 @@ pub fn validate_endpoints(endpoints: &[&str])
         }
     }
 
-    info!("All PD endpoints are consistent, {:?}", endpoints);
-
     match members {
         Some(members) => {
-            let (client, members) = box_try!(try_connect_leader(&members));
+            let (client, members) = try!(try_connect_leader(&members));
+            info!("All PD endpoints are consistent: {:?}", endpoints);
             Ok((client, members))
         }
         _ => Err(box_err!("PD cluster failed to respond")),
     }
 }
 
-fn connect(addr: &str) -> Result<pdpb_grpc::PDAsyncClient> {
+fn connect(addr: &str) -> Result<PDClient> {
     debug!("connect to PD endpoint: {:?}", addr);
-    let (host, port) = match Url::parse(addr) {
-        Ok(ep) => {
-            let host = match ep.host_str() {
-                Some(h) => h.to_owned(),
-                None => return Err(box_err!("unkown host, please specify the host")),
-            };
-            let port = match ep.port() {
-                Some(p) => p,
-                None => return Err(box_err!("unkown port, please specify the port")),
-            };
-            (host, port)
-        }
-
-        Err(_) => {
-            let mut parts = addr.split(':');
-            (parts.next().unwrap().to_owned(), parts.next().unwrap().parse::<u16>().unwrap())
-        }
+    let ep = box_try!(Url::parse(addr));
+    let host = match ep.host_str() {
+        Some(h) => h.to_owned(),
+        None => return Err(box_err!("unkown host, please specify the host")),
+    };
+    let port = match ep.port() {
+        Some(p) => p,
+        None => return Err(box_err!("unkown port, please specify the port")),
     };
 
     let mut conf: grpc::client::GrpcClientConf = Default::default();
     conf.http.no_delay = Some(true);
 
     // TODO: It seems that `new` always return an Ok(_).
-    match pdpb_grpc::PDAsyncClient::new(&host, port, false, conf) {
-        Ok(client) => {
+    PDClient::new(&host, port, false, conf)
+        .and_then(|client| {
             // try request.
-            match get_members(&client) {
+            match client.GetMembers(pdpb::GetMembersRequest::new()) {
                 Ok(_) => Ok(client),
-                Err(e) => Err(box_err!("fail to connect to {:?} {:?}", addr, e)),
+                Err(e) => Err(e),
             }
-        }
-
-        Err(e) => Err(box_err!(e)),
-    }
+        })
+        .map_err(Error::Grpc)
 }
 
-fn try_connect_leader(members: &pdpb::GetMembersResponse)
-                      -> Result<(pdpb_grpc::PDAsyncClient, pdpb::GetMembersResponse)> {
-    // Try to connect the PD cluster leader.
-    let leader = members.get_leader();
-    for ep in leader.get_client_urls() {
-        if let Ok(client) = connect(ep.as_str()) {
-            info!("connect to PD leader {:?}", ep);
-            return Ok((client, members.clone()));
-        }
-    }
-
-    // Then try to connect other members.
+fn try_connect_leader(previous: &GetMembersResponse) -> Result<(PDClient, GetMembersResponse)> {
+    // Try to connect other members.
     // Randomize endpoints.
-    let members = members.get_members();
+    let members = previous.get_members();
     let mut indexes: Vec<usize> = (0..members.len()).collect();
     rand::thread_rng().shuffle(&mut indexes);
 
+    let mut resp = None;
     for i in indexes {
         for ep in members[i].get_client_urls() {
             match connect(ep.as_str()) {
-                Ok(cli) => {
-                    let resp = match get_members(&cli) {
-                        Ok(resp) => resp,
+                Ok(c) => {
+                    match c.GetMembers(pdpb::GetMembersRequest::new()) {
+                        Ok(r) => {
+                            resp = Some(r);
+                            break;
+                        }
                         Err(e) => {
                             error!("PD endpoint {} failed to respond: {:?}", ep, e);
                             continue;
                         }
                     };
-
-                    return Ok((cli, resp));
                 }
-                Err(_) => {
-                    error!("failed to connect to {}, try next", ep);
+                Err(e) => {
+                    error!("failed to connect to {}, {:?}", ep, e);
                     continue;
                 }
+            }
+        }
+    }
+
+    // Then try to connect the PD cluster leader.
+    if let Some(resp) = resp {
+        let leader = resp.get_leader().clone();
+        for ep in leader.get_client_urls() {
+            if let Ok(client) = connect(ep.as_str()) {
+                info!("connect to PD leader {:?}", ep);
+                return Ok((client, resp));
             }
         }
     }
@@ -218,45 +209,24 @@ fn try_connect_leader(members: &pdpb::GetMembersResponse)
     Err(box_err!("failed to connect to {:?}", members))
 }
 
-fn check_resp_header(header: &pdpb::ResponseHeader) -> Result<()> {
-    if !header.has_error() {
-        return Ok(());
-    }
-    // TODO: translate more error types
-    let err = header.get_error();
-    Err(box_err!(err.get_message()))
-}
-
-impl fmt::Debug for RpcClient {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt,
-               "PD gRPC Client connects to cluster {:?}",
-               self.cluster_id)
-    }
-}
-
 const MAX_RETRY_COUNT: usize = 100;
 const RETRY_INTERVAL: u64 = 1;
 
-// send a request in synchronized fashion.
-fn do_request<F, R>(client: &RpcClient, f: F) -> Result<R>
-    where F: Fn(&pdpb_grpc::PDAsyncClient) -> GrpcFutureSend<R>
+fn do_request<F, R>(client: &RpcAsyncClient, f: F) -> Result<R>
+    where F: Fn(&PDClient) -> result::Result<R, grpc::error::GrpcError>
 {
-    let mut resp = None;
     for _ in 0..MAX_RETRY_COUNT {
-        let r: result::Result<_, grpc::error::GrpcError> = {
+        let r = {
             let inner = client.inner.read().unwrap();
             let timer = PD_SEND_MSG_HISTOGRAM.start_timer();
-            let future = f(&inner.client);
-            let r = futures::Future::wait(future);
+            let r = f(&inner.client);
             timer.observe_duration();
             r
         };
 
         match r {
             Ok(r) => {
-                resp = Some(r);
-                break;
+                return Ok(r);
             }
             Err(e) => {
                 error!("fail to request: {:?}", e);
@@ -271,15 +241,31 @@ fn do_request<F, R>(client: &RpcClient, f: F) -> Result<R>
                         thread::sleep(Duration::from_secs(RETRY_INTERVAL));
                     }
                 }
-                continue;
             }
         }
     }
 
-    resp.ok_or(box_err!("fail to request"))
+    Err(box_err!("fail to request"))
 }
 
-impl PdClient for RpcClient {
+fn check_resp_header(header: &pdpb::ResponseHeader) -> Result<()> {
+    if !header.has_error() {
+        return Ok(());
+    }
+    // TODO: translate more error types
+    let err = header.get_error();
+    Err(box_err!(err.get_message()))
+}
+
+impl fmt::Debug for RpcAsyncClient {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt,
+               "PD gRPC Client connects to cluster {:?}",
+               self.cluster_id)
+    }
+}
+
+impl PdClient for RpcAsyncClient {
     fn get_cluster_id(&self) -> Result<u64> {
         Ok(self.cluster_id)
     }
@@ -424,88 +410,5 @@ impl PdClient for RpcClient {
         try!(check_resp_header(resp.get_header()));
 
         Ok(())
-    }
-}
-
-// TODO: retry on failure.
-// struct retry;
-// impl futures::Future for retry {}
-// Or https://github.com/srijs/rust-tokio-retry
-
-impl AsyncPdClient for RpcClient {
-    fn get_region_by_id(&self, region_id: u64) -> PdFuture<metapb::Region> {
-        let mut req = pdpb::GetRegionByIDRequest::new();
-        req.set_header(self.header());
-        req.set_region_id(region_id);
-
-        client.GetRegionByID(req).and_then(|resp| {
-            try!(check_resp_header(resp.get_header()));
-            if resp.has_region() {
-                Ok(Some(resp.take_region()))
-            } else {
-                Ok(None)
-            }
-        })
-    }
-
-    fn region_heartbeat(&self,
-                        region: metapb::Region,
-                        leader: metapb::Peer,
-                        down_peers: Vec<pdpb::PeerStats>,
-                        pending_peers: Vec<metapb::Peer>)
-                        -> PdFuture<pdpb::RegionHeartbeatResponse> {
-        // let mut req = pdpb::RegionHeartbeatRequest::new();
-        // req.set_header(self.header());
-        // req.set_region(region);
-        // req.set_leader(leader);
-        // req.set_down_peers(RepeatedField::from_vec(down_peers));
-        // req.set_pending_peers(RepeatedField::from_vec(pending_peers));
-
-        // let resp = try!(do_request(self, |client| client.RegionHeartbeat(req.clone())));
-        // try!(check_resp_header(resp.get_header()));
-
-        // Ok(resp)
-
-        unimplemented!()
-    }
-
-    fn ask_split(&self, region: metapb::Region) -> PdFuture<pdpb::AskSplitResponse> {
-        // let mut req = pdpb::AskSplitRequest::new();
-        // req.set_header(self.header());
-        // req.set_region(region);
-
-        // let resp = try!(do_request(self, |client| client.AskSplit(req.clone())));
-        // try!(check_resp_header(resp.get_header()));
-
-        // Ok(resp)
-
-        unimplemented!()
-    }
-
-    fn store_heartbeat(&self, stats: pdpb::StoreStats) -> PdFuture<()> {
-        // let mut req = pdpb::StoreHeartbeatRequest::new();
-        // req.set_header(self.header());
-        // req.set_stats(stats);
-
-        // let resp = try!(do_request(self, |client| client.StoreHeartbeat(req.clone())));
-        // try!(check_resp_header(resp.get_header()));
-
-        // Ok(())
-
-        unimplemented!()
-    }
-
-    fn report_split(&self, left: metapb::Region, right: metapb::Region) -> PdFuture<()> {
-        // let mut req = pdpb::ReportSplitRequest::new();
-        // req.set_header(self.header());
-        // req.set_left(left);
-        // req.set_right(right);
-
-        // let resp = try!(do_request(self, |client| client.ReportSplit(req.clone())));
-        // try!(check_resp_header(resp.get_header()));
-
-        // Ok(())
-
-        unimplemented!()
     }
 }
