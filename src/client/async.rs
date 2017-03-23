@@ -12,13 +12,13 @@
 // limitations under the License.
 
 use std::fmt;
-use std::result;
 use std::thread;
 use std::sync::RwLock;
 use std::time::Duration;
 use std::collections::HashSet;
 
 use grpc;
+use grpc::futures_grpc::GrpcFutureSend;
 
 use protobuf::RepeatedField;
 
@@ -26,16 +26,18 @@ use url::Url;
 
 use rand::{self, Rng};
 
+use futures::Future;
+
 use kvproto::metapb;
 use kvproto::pdpb::{self, GetMembersResponse, Member};
-use kvproto::pdpb_grpc::{PD, PDClient};
+use kvproto::pdpb_grpc::{PDAsync, PDAsyncClient};
 
 use super::{Result, Error, PdClient};
 use super::metrics::*;
 
 struct Inner {
     members: GetMembersResponse,
-    client: PDClient,
+    client: PDAsyncClient,
 }
 
 pub struct RpcAsyncClient {
@@ -76,7 +78,7 @@ impl RpcAsyncClient {
     }
 }
 
-pub fn validate_endpoints(endpoints: &[String]) -> Result<(PDClient, GetMembersResponse)> {
+pub fn validate_endpoints(endpoints: &[String]) -> Result<(PDAsyncClient, GetMembersResponse)> {
     if endpoints.is_empty() {
         return Err(box_err!("empty PD endpoints"));
     }
@@ -100,7 +102,7 @@ pub fn validate_endpoints(endpoints: &[String]) -> Result<(PDClient, GetMembersR
             }
         };
 
-        let resp = match client.GetMembers(pdpb::GetMembersRequest::new()) {
+        let resp = match Future::wait(client.GetMembers(pdpb::GetMembersRequest::new())) {
             Ok(resp) => resp,
             // Ignore failed PD node.
             Err(e) => {
@@ -137,7 +139,7 @@ pub fn validate_endpoints(endpoints: &[String]) -> Result<(PDClient, GetMembersR
     }
 }
 
-fn connect(addr: &str) -> Result<PDClient> {
+fn connect(addr: &str) -> Result<PDAsyncClient> {
     debug!("connect to PD endpoint: {:?}", addr);
     let ep = box_try!(Url::parse(addr));
     let host = match ep.host_str() {
@@ -153,10 +155,10 @@ fn connect(addr: &str) -> Result<PDClient> {
     conf.http.no_delay = Some(true);
 
     // TODO: It seems that `new` always return an Ok(_).
-    PDClient::new(&host, port, false, conf)
+    PDAsyncClient::new(&host, port, false, conf)
         .and_then(|client| {
             // try request.
-            match client.GetMembers(pdpb::GetMembersRequest::new()) {
+            match Future::wait(client.GetMembers(pdpb::GetMembersRequest::new())) {
                 Ok(_) => Ok(client),
                 Err(e) => Err(e),
             }
@@ -164,7 +166,8 @@ fn connect(addr: &str) -> Result<PDClient> {
         .map_err(Error::Grpc)
 }
 
-fn try_connect_leader(previous: &GetMembersResponse) -> Result<(PDClient, GetMembersResponse)> {
+fn try_connect_leader(previous: &GetMembersResponse)
+                      -> Result<(PDAsyncClient, GetMembersResponse)> {
     // Try to connect other members.
     // Randomize endpoints.
     let members = previous.get_members();
@@ -176,7 +179,7 @@ fn try_connect_leader(previous: &GetMembersResponse) -> Result<(PDClient, GetMem
         for ep in members[i].get_client_urls() {
             match connect(ep.as_str()) {
                 Ok(c) => {
-                    match c.GetMembers(pdpb::GetMembersRequest::new()) {
+                    match Future::wait(c.GetMembers(pdpb::GetMembersRequest::new())) {
                         Ok(r) => {
                             resp = Some(r);
                             break;
@@ -213,13 +216,13 @@ const MAX_RETRY_COUNT: usize = 100;
 const RETRY_INTERVAL: u64 = 1;
 
 fn do_request<F, R>(client: &RpcAsyncClient, f: F) -> Result<R>
-    where F: Fn(&PDClient) -> result::Result<R, grpc::error::GrpcError>
+    where F: Fn(&PDAsyncClient) -> GrpcFutureSend<R>
 {
     for _ in 0..MAX_RETRY_COUNT {
         let r = {
             let inner = client.inner.read().unwrap();
             let timer = PD_SEND_MSG_HISTOGRAM.start_timer();
-            let r = f(&inner.client);
+            let r = Future::wait(f(&inner.client));
             timer.observe_duration();
             r
         };
