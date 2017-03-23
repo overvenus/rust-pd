@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,8 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod server;
-pub mod case;
+use prometheus::{Histogram, exponential_buckets};
 
-pub use self::server::Server;
-pub use self::case::Case;
+lazy_static! {
+    pub static ref PD_SEND_MSG_HISTOGRAM: Histogram =
+        register_histogram!(
+            "tikv_pd_msg_send_duration_seconds",
+            "Bucketed histogram of PD message send duration",
+             exponential_buckets(0.0005, 10.0, 7).unwrap()
+        ).unwrap();
+}

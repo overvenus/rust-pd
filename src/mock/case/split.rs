@@ -1,3 +1,16 @@
+// Copyright 2017 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use protobuf::RepeatedField;
@@ -32,7 +45,7 @@ impl Split {
             header.set_cluster_id(i as u64 + 1); // start from 1.
             resp.set_header(header.clone());
             resp.set_members(RepeatedField::from_vec(members.clone()));
-            resp.set_leader(members[i].clone());
+            resp.set_leader(members[0].clone());
             resps.push(resp);
         }
 

@@ -6,6 +6,17 @@ extern crate futures_cpupool;
 extern crate backtrace;
 #[macro_use]
 extern crate log;
+extern crate url;
+#[macro_use]
+extern crate lazy_static;
+extern crate rand;
+#[macro_use]
+extern crate prometheus;
+#[macro_use]
+extern crate quick_error;
+
+#[macro_use]
+pub mod util;
 
 pub mod mock;
-pub mod util;
+pub mod client;

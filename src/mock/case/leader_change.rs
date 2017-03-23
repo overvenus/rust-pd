@@ -1,12 +1,29 @@
+// Copyright 2017 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use protobuf::RepeatedField;
 
-use kvproto::pdpb::{Member, GetMembersRequest, GetMembersResponse, ResponseHeader};
+use grpc::error::GrpcError;
+
+use kvproto::pdpb::*;
 
 use super::Case;
 use super::Result;
+
+pub const LEADER_INTERVAL_SEC: u64 = 2;
 
 #[derive(Debug)]
 struct Roulette {
@@ -62,6 +79,10 @@ impl LeaderChange {
             }),
         }
     }
+
+    pub fn get_leader_interval() -> Duration {
+        Duration::from_secs(LEADER_INTERVAL_SEC)
+    }
 }
 
 const DEAD_ID: u64 = 1000;
@@ -71,14 +92,30 @@ const DEAD_URL: &'static str = "http://127.0.0.1:65534";
 impl Case for LeaderChange {
     fn GetMembers(&self, _: &GetMembersRequest) -> Option<Result<GetMembersResponse>> {
         let mut r = self.r.lock().unwrap();
-
         let now = Instant::now();
-        if now.duration_since(r.ts) > Duration::from_secs(5) {
+        if now.duration_since(r.ts) > LeaderChange::get_leader_interval() {
             r.idx += 1;
             r.ts = now;
+            return Some(Err(GrpcError::Other("not leader")));
         }
+
         info!("[LeaderChange] GetMembers: {:?}",
               self.resps[r.idx % self.resps.len()]);
         Some(Ok(self.resps[r.idx % self.resps.len()].clone()))
+    }
+
+    fn IsBootstrapped(&self, _: &IsBootstrappedRequest) -> Option<Result<IsBootstrappedResponse>> {
+        let mut resp = IsBootstrappedResponse::new();
+        resp.set_bootstrapped(false);
+
+        let mut r = self.r.lock().unwrap();
+        let now = Instant::now();
+        if now.duration_since(r.ts) > LeaderChange::get_leader_interval() {
+            r.idx += 1;
+            r.ts = now;
+            return Some(Err(GrpcError::Other("not leader")));
+        }
+
+        Some(Ok(resp))
     }
 }
