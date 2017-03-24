@@ -15,6 +15,7 @@ dependencies = [
  "protobuf 1.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "quick-error 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.3.15 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-core 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "url 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 

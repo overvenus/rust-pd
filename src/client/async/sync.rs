@@ -11,9 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fmt;
 use std::thread;
-use std::sync::RwLock;
 use std::time::Duration;
 use std::collections::HashSet;
 
@@ -29,54 +27,13 @@ use rand::{self, Rng};
 use futures::Future;
 
 use kvproto::metapb;
-use kvproto::pdpb::{self, GetMembersResponse, Member};
+use kvproto::pdpb::{self, GetMembersResponse};
 use kvproto::pdpb_grpc::{PDAsync, PDAsyncClient};
 
-use super::{Result, Error, PdClient};
-use super::metrics::*;
+use super::super::{Result, Error, PdClient};
+use super::super::metrics::*;
+use super::RpcAsyncClient;
 
-struct Inner {
-    members: GetMembersResponse,
-    client: PDAsyncClient,
-}
-
-pub struct RpcAsyncClient {
-    cluster_id: u64,
-    inner: RwLock<Inner>,
-}
-
-impl RpcAsyncClient {
-    pub fn new(endpoints: &str) -> Result<RpcAsyncClient> {
-        let endpoints: Vec<_> = endpoints.split(',')
-            .map(|s| if !s.starts_with("http://") {
-                format!("http://{}", s)
-            } else {
-                s.to_owned()
-            })
-            .collect();
-
-        let (client, members) = try!(validate_endpoints(&endpoints));
-        Ok(RpcAsyncClient {
-            cluster_id: members.get_header().get_cluster_id(),
-            inner: RwLock::new(Inner {
-                members: members,
-                client: client,
-            }),
-        })
-    }
-
-    fn header(&self) -> pdpb::RequestHeader {
-        let mut header = pdpb::RequestHeader::new();
-        header.set_cluster_id(self.cluster_id);
-        header
-    }
-
-    // For tests
-    pub fn get_leader(&self) -> Member {
-        let inner = self.inner.read().unwrap();
-        inner.members.get_leader().clone()
-    }
-}
 
 pub fn validate_endpoints(endpoints: &[String]) -> Result<(PDAsyncClient, GetMembersResponse)> {
     if endpoints.is_empty() {
@@ -258,14 +215,6 @@ fn check_resp_header(header: &pdpb::ResponseHeader) -> Result<()> {
     // TODO: translate more error types
     let err = header.get_error();
     Err(box_err!(err.get_message()))
-}
-
-impl fmt::Debug for RpcAsyncClient {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt,
-               "PD gRPC Client connects to cluster {:?}",
-               self.cluster_id)
-    }
 }
 
 impl PdClient for RpcAsyncClient {

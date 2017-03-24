@@ -13,15 +13,13 @@
 
 use std::vec::Vec;
 
-#[allow(dead_code)]
 mod async;
-mod sync;
 mod metrics;
 
 pub mod errors;
 pub use self::errors::{Result, Error};
-pub use self::sync::RpcClient;
-pub use self::sync::validate_endpoints;
+pub use self::async::RpcAsyncClient as RpcClient;
+pub use self::async::validate_endpoints;
 
 use kvproto::metapb;
 use kvproto::pdpb;

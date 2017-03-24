@@ -17,6 +17,7 @@ extern crate rand;
 extern crate prometheus;
 #[macro_use]
 extern crate quick_error;
+extern crate tokio_core;
 
 #[macro_use]
 pub mod util;
