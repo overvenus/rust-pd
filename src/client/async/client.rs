@@ -11,12 +11,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::io;
 use std::fmt;
+use std::thread;
 use std::sync::RwLock;
+use std::sync::mpsc::channel as std_channel;
 
 use protobuf::RepeatedField;
 
+use futures;
 use futures::Future;
+use futures::sync::mpsc::{unbounded, UnboundedSender};
+use futures::Stream;
+
+use tokio_core::reactor::Core;
+use tokio_core::reactor::Remote;
 
 use client::AsyncPdClient;
 use kvproto::metapb;
@@ -37,6 +46,8 @@ pub struct Inner {
 pub struct RpcAsyncClient {
     pub cluster_id: u64,
     pub inner: RwLock<Inner>,
+    shutdown_tx: UnboundedSender<()>,
+    remote: Remote,
 }
 
 impl RpcAsyncClient {
@@ -50,12 +61,52 @@ impl RpcAsyncClient {
             .collect();
 
         let (client, members) = try!(validate_endpoints(&endpoints));
+
+        let (tx, rx) = std_channel();
+
+        thread::Builder::new().name("PdClient".to_owned())
+            .spawn(move || {
+                let mut core = match Core::new() {
+                    Ok(core) => core,
+                    Err(err) => {
+                        tx.send(Err(err)).ok();
+                        return;
+                    }
+                };
+
+                let handle = core.remote();
+                let (shutdown_tx, shutdown_rx) = unbounded::<()>();
+                let shutdown = shutdown_rx.into_future()
+                    .map_err(|((), _)| Error::Io(io::Error::new(io::ErrorKind::Other, "shutdown")))
+                    .and_then(move |_| {
+                        debug!("client shutdown");
+                        futures::failed::<(), _>(Error::Io(io::Error::new(io::ErrorKind::Other,
+                                                                          "shutdown")))
+                    });
+
+                tx.send(Ok((shutdown_tx, handle))).ok();
+                core.run(shutdown).ok();
+            })?;
+
+        let (shutdown_tx, remote) = try!(rx.recv().unwrap());
+
         Ok(RpcAsyncClient {
             cluster_id: members.get_header().get_cluster_id(),
             inner: RwLock::new(Inner {
                 members: members,
                 client: client,
             }),
+            shutdown_tx: shutdown_tx,
+            remote: remote,
+        })
+    }
+
+    pub fn spawn<F>(&self, f: F)
+        where F: Future<Item = (), Error = ()> + Send + 'static
+    {
+        self.remote.spawn(|h| {
+            h.spawn(f);
+            Ok(())
         })
     }
 
@@ -69,6 +120,12 @@ impl RpcAsyncClient {
     pub fn get_leader(&self) -> Member {
         let inner = self.inner.read().unwrap();
         inner.members.get_leader().clone()
+    }
+}
+
+impl Drop for RpcAsyncClient {
+    fn drop(&mut self) {
+        self.shutdown_tx.send(()).unwrap();
     }
 }
 
