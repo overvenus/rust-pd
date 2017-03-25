@@ -241,4 +241,8 @@ impl AsyncPdClient for RpcAsyncClient {
             })
             .boxed()
     }
+
+    fn resolve(&self, future: Box<Future<Item = (), Error = ()> + Send + 'static>) {
+        self.spawn(future);
+    }
 }

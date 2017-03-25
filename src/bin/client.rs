@@ -43,7 +43,7 @@ fn main() {
     });
 
     let start = Instant::now();
-    client.spawn(f);
+    client.resolve(f.boxed());
     println!("spawn {:?}", start.elapsed());
 
     thread::sleep(Duration::from_secs(2));

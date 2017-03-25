@@ -103,6 +103,7 @@ pub trait PdClient: Send + Sync {
 }
 
 use futures::BoxFuture;
+use futures::Future;
 
 pub type PdFuture<T> = BoxFuture<T, Error>;
 
@@ -126,4 +127,7 @@ pub trait AsyncPdClient {
 
     // Report pd the split region.
     fn report_split(&self, left: metapb::Region, right: metapb::Region) -> PdFuture<()>;
+
+    // Resolve a future in the client.
+    fn resolve(&self, future: Box<Future<Item = (), Error = ()> + Send + 'static>);
 }
