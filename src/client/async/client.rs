@@ -11,7 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io;
 use std::fmt;
 use std::thread;
 use std::sync::RwLock;
@@ -19,10 +18,9 @@ use std::sync::mpsc::channel as std_channel;
 
 use protobuf::RepeatedField;
 
-use futures;
+use futures::future;
 use futures::Future;
-use futures::sync::mpsc::{unbounded, UnboundedSender};
-use futures::Stream;
+use futures::sync::oneshot::{channel, Sender};
 
 use tokio_core::reactor::Core;
 use tokio_core::reactor::Remote;
@@ -45,8 +43,8 @@ pub struct Inner {
 pub struct RpcAsyncClient {
     pub cluster_id: u64,
     pub inner: RwLock<Inner>,
-    shutdown_tx: UnboundedSender<()>,
     remote: Remote,
+    _shutdown: Sender<()>,
 }
 
 impl RpcAsyncClient {
@@ -63,6 +61,7 @@ impl RpcAsyncClient {
 
         let (tx, rx) = std_channel();
 
+        // TODO: move it out.
         thread::Builder::new().name("PdClient".to_owned())
             .spawn(move || {
                 let mut core = match Core::new() {
@@ -74,16 +73,17 @@ impl RpcAsyncClient {
                 };
 
                 let handle = core.remote();
-                let (shutdown_tx, shutdown_rx) = unbounded::<()>();
-                let shutdown = shutdown_rx.into_future()
-                    .map_err(|((), _)| Error::Io(io::Error::new(io::ErrorKind::Other, "shutdown")))
-                    .and_then(move |_| {
-                        debug!("client shutdown");
-                        futures::failed::<(), _>(Error::Io(io::Error::new(io::ErrorKind::Other,
-                                                                          "shutdown")))
-                    });
+                let (shutdown_tx, shutdown_rx) = channel::<()>();
+
+                // The shutdown future will be resolved once the Sender is been dropped.
+                // and this thread returns.
+                let shutdown = shutdown_rx.then(|_| {
+                    debug!("PD client shutdown");
+                    future::ok::<(), ()>(())
+                });
 
                 tx.send(Ok((shutdown_tx, handle))).ok();
+
                 core.run(shutdown).ok();
             })?;
 
@@ -95,8 +95,8 @@ impl RpcAsyncClient {
                 members: members,
                 client: client,
             }),
-            shutdown_tx: shutdown_tx,
             remote: remote,
+            _shutdown: shutdown_tx,
         })
     }
 
@@ -122,12 +122,6 @@ impl RpcAsyncClient {
     }
 }
 
-impl Drop for RpcAsyncClient {
-    fn drop(&mut self) {
-        self.shutdown_tx.send(()).unwrap();
-    }
-}
-
 fn check_resp_header(header: &pdpb::ResponseHeader) -> Result<()> {
     if !header.has_error() {
         return Ok(());
@@ -145,7 +139,8 @@ impl fmt::Debug for RpcAsyncClient {
     }
 }
 
-// TODO: retry...
+// TODO: Retry
+// TODO: Leader Change
 impl AsyncPdClient for RpcAsyncClient {
     // Get region by region id.
     fn get_region_by_id(&self, region_id: u64) -> PdFuture<Option<metapb::Region>> {
