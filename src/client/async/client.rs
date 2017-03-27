@@ -26,23 +26,20 @@ use tokio_core::reactor::Core;
 use tokio_core::reactor::Remote;
 
 use kvproto::metapb;
-use kvproto::pdpb::{self, GetMembersResponse, Member};
+use kvproto::pdpb::{self, Member};
 use kvproto::pdpb_grpc::{PDAsync, PDAsyncClient};
 
 use super::super::{Result, Error, PdFuture};
 use super::super::AsyncPdClient;
 use super::validate_endpoints;
 
-// TODO: revoke pubs.
-pub struct Inner {
-    pub members: GetMembersResponse,
-    pub client: PDAsyncClient,
-}
+use super::util::LeaderClient;
+use super::util::Request;
 
 // TODO: revoke pubs.
 pub struct RpcAsyncClient {
     pub cluster_id: u64,
-    pub inner: RwLock<Inner>,
+    pub inner: RwLock<LeaderClient<PDAsyncClient>>,
     remote: Remote,
     _shutdown: Sender<()>,
 }
@@ -91,10 +88,7 @@ impl RpcAsyncClient {
 
         Ok(RpcAsyncClient {
             cluster_id: members.get_header().get_cluster_id(),
-            inner: RwLock::new(Inner {
-                members: members,
-                client: client,
-            }),
+            inner: RwLock::new(LeaderClient::new(client, members)),
             remote: remote,
             _shutdown: shutdown_tx,
         })
@@ -118,7 +112,7 @@ impl RpcAsyncClient {
     // For tests
     pub fn get_leader(&self) -> Member {
         let inner = self.inner.read().unwrap();
-        inner.members.get_leader().clone()
+        inner.get_members().get_leader().clone()
     }
 }
 
@@ -149,7 +143,7 @@ impl AsyncPdClient for RpcAsyncClient {
         req.set_region_id(region_id);
 
         let inner = self.inner.read().unwrap();
-        inner.client
+        inner.get_client()
             .GetRegionByID(req)
             .map_err(Error::Grpc)
             .and_then(|mut resp| {
@@ -177,13 +171,29 @@ impl AsyncPdClient for RpcAsyncClient {
         req.set_down_peers(RepeatedField::from_vec(down_peers));
         req.set_pending_peers(RepeatedField::from_vec(pending_peers));
 
-        let inner = self.inner.read().unwrap();
-        inner.client
-            .RegionHeartbeat(req)
-            .map_err(Error::Grpc)
-            .and_then(|resp| {
-                try!(check_resp_header(resp.get_header()));
-                Ok(resp)
+        let inner = self.inner.read().unwrap().client();
+        client.map(|client| {
+                let retry_req = Request::new(10, client, |client| {
+                    client.RegionHeartbeat(req.clone())
+                        .map_err(Error::Grpc)
+                        .and_then(|resp| {
+                            try!(check_resp_header(resp.get_header()));
+                            Ok((resp))
+                        })
+                });
+
+                // Retry ...
+                loop_fn(retry_req, |retry_req| {
+                    retry_req.send()
+                        .and_then(|retry_req| retry_req.receive())
+                        .and_then(|(retry_req, done)| {
+                            if done {
+                                Ok(Loop::Break(retry_req))
+                            } else {
+                                Ok(Loop::Continue(retry_req))
+                            }
+                        })
+                })
             })
             .boxed()
     }
@@ -195,7 +205,7 @@ impl AsyncPdClient for RpcAsyncClient {
         req.set_region(region);
 
         let inner = self.inner.read().unwrap();
-        inner.client
+        inner.get_client()
             .AskSplit(req)
             .map_err(Error::Grpc)
             .and_then(|resp| {
@@ -212,7 +222,7 @@ impl AsyncPdClient for RpcAsyncClient {
         req.set_stats(stats);
 
         let inner = self.inner.read().unwrap();
-        inner.client
+        inner.get_client()
             .StoreHeartbeat(req)
             .map_err(Error::Grpc)
             .and_then(|resp| {
@@ -230,7 +240,7 @@ impl AsyncPdClient for RpcAsyncClient {
         req.set_right(right);
 
         let inner = self.inner.read().unwrap();
-        inner.client
+        inner.get_client()
             .ReportSplit(req)
             .map_err(Error::Grpc)
             .and_then(|resp| {
