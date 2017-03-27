@@ -1,29 +1,30 @@
 use std::sync::Arc;
 
-use futures::Poll;
-use futures::Async;
+// use futures::Poll;
+// use futures::Async;
 use futures::Future;
-use futures::future::{ok, FutureResult};
+use futures::future::ok;
 
 use kvproto::pdpb::GetMembersResponse;
 use kvproto::pdpb_grpc::PDAsync;
 
+use super::super::PdFuture;
 use super::super::Result;
-use super::super::Error;
+// use super::super::Error;
 
-pub struct GetClient<C: PDAsync> {
-    client: Arc<C>,
-}
+// pub struct GetClient<C: PDAsync> {
+//     client: Arc<C>,
+// }
 
-impl<C: PDAsync> Future for GetClient<C> {
-    type Item = Arc<C>;
-    type Error = Error;
+// impl<C: PDAsync> Future for GetClient<C> {
+//     type Item = Arc<C>;
+//     type Error = Error;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        // TODO: resolve it in future.
-        Ok(Async::Ready(self.client.clone()))
-    }
-}
+//     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+//         // TODO: resolve it in future.
+//         Ok(Async::Ready(self.client.clone()))
+//     }
+// }
 
 pub struct LeaderClient<C> {
     members: GetMembersResponse,
@@ -38,9 +39,13 @@ impl<C: PDAsync> LeaderClient<C> {
         }
     }
 
-    // TODO: resolve it in future.
-    pub fn client(&self) -> GetClient<C> {
-        GetClient { client: self.client.clone() }
+    // // TODO: resolve it in future.
+    // pub fn client(&self) -> GetClient<C> {
+    //     GetClient { client: self.client.clone() }
+    // }
+
+    pub fn clone_client(&self) -> Arc<C> {
+        self.client.clone()
     }
 
     pub fn get_client(&self) -> &C {
@@ -62,45 +67,47 @@ impl<C: PDAsync> LeaderClient<C> {
 
 pub struct Request<C, R, F> {
     retry_count: usize,
-    inner: Arc<C>,
+    client: Arc<C>,
     resp: Option<Result<R>>,
     func: F,
 }
 
-impl<C, R, F> Request<C, R>
-    where C: PDAsync,
-          F: FnMut(&C) -> PdFuture<R>
+impl<C, R, F> Request<C, R, F>
+    where C: PDAsync + Send + Sync + 'static,
+          R: Send + 'static,
+          F: FnMut(&C) -> PdFuture<R> + Send + 'static
 {
-    pub fn new(retry: usize, client: Arc<C>, f: F) -> Request<C> {
+    pub fn new(retry: usize, client: Arc<C>, f: F) -> Request<C, R, F> {
         Request {
             retry_count: retry,
-            inner: client,
+            client: client,
             resp: None,
             func: f,
         }
     }
 
-    pub fn send(self) -> FutureResult<Request<C>, Error> {
-        info!("building request: {}", self.retry_count);
-        let req = self.func(self.client.as_ref());
+    pub fn send(mut self) -> PdFuture<Request<C, R, F>> {
+        debug!("request retry remains: {}", self.retry_count);
+        let req = (self.func)(self.client.as_ref());
         req.then(|resp| {
-            match resp {
-                Ok(resp) => self.resp = Some(Ok(resp)),
-                Err(err) => {
-                    error!("{:?}", err);
-                    self.retry_count -= 1;
-                }
-            };
-            ok(self)
-        })
+                match resp {
+                    Ok(resp) => self.resp = Some(Ok(resp)),
+                    Err(err) => {
+                        self.retry_count -= 1;
+                        error!("request failed: {:?}", err);
+                    }
+                };
+                ok(self)
+            })
+            .boxed()
     }
 
-    pub fn receive(self) -> FutureResult<(Request<C>, bool), Error> {
+    pub fn receive(self) -> PdFuture<(Request<C, R, F>, bool)> {
         let done = self.retry_count == 0 || self.resp.is_some();
-        ok((self, done))
+        ok((self, done)).boxed()
     }
 
-    pub fn client(&self) -> &C {
-        self.inner.as_ref()
+    pub fn get_resp(self) -> Option<Result<R>> {
+        self.resp
     }
 }
