@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use pd::util::set_exit_hook;
 use pd::mock::Server as MockServer;
-use pd::mock::case::*;
+use pd::mock::mocker::*;
 
 fn main() {
     env_logger::init().unwrap();

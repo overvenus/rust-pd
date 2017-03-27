@@ -51,7 +51,7 @@ fn main() {
 
 fn setup() {
     use pd::mock::Server as MockServer;
-    use pd::mock::case::*;
+    use pd::mock::mocker::*;
 
     let eps: Vec<_> = EPS.iter().map(|ep| ep.to_string()).collect();
 
