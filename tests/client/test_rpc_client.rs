@@ -101,7 +101,7 @@ fn test_change_leader() {
 
     let _server_a = MockServer::run("127.0.0.1:43079", se.clone(), Some(lc.clone()));
     let _server_b = MockServer::run("127.0.0.1:53079", se.clone(), Some(lc.clone()));
-    let _server_a = MockServer::run("127.0.0.1:63079", se.clone(), Some(lc.clone()));
+    let _server_c = MockServer::run("127.0.0.1:63079", se.clone(), Some(lc.clone()));
 
     thread::sleep(Duration::from_secs(1));
 
@@ -118,4 +118,34 @@ fn test_change_leader() {
     }
 
     panic!("failed, leader should changed");
+}
+
+#[test]
+fn test_retry() {
+    use pd::client::AsyncPdClient;
+    use futures::Future;
+    use futures::future;
+
+    let mut eps = vec![
+        "http://127.0.0.1:63080".to_owned(),
+    ];
+
+    let se = Arc::new(Service::new(eps.clone()));
+    let lc = Arc::new(Retry::new(3));
+
+    let _server_a = MockServer::run("127.0.0.1:63080", se.clone(), Some(lc.clone()));
+
+    thread::sleep(Duration::from_secs(1));
+
+    let client = RpcClient::new(&eps.pop().unwrap()).unwrap();
+
+    for _ in 0..5 {
+        let region = AsyncPdClient::get_region_by_id(&client, 1);
+        let f = region.then(|res| {
+            assert_eq!(res.is_ok(), true);
+            future::ok::<(), ()>(())
+        });
+
+        Future::wait(f).unwrap();
+    }
 }
