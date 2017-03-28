@@ -37,9 +37,19 @@ impl<C: PDAsync> LeaderClient<C> {
         }
     }
 
-    // pub fn client(&self) -> GetClient<C> {
-    //     GetClient { client: self.client.clone() }
-    // }
+    pub fn client<Req, Resp, G>(&self, retry: usize, req: Req, f: G) -> GetClient<C, Req, Resp, G>
+        where Req: Clone + 'static,
+              G: FnMut(Arc<C>, Req) -> PdFuture<Resp> + Send + 'static
+    {
+        GetClient {
+            need_update: false,
+            retry_count: retry,
+            bundle: self.inner.clone(),
+            req: req,
+            resp: None,
+            func: f,
+        }
+    }
 
     pub fn get_client(&self) -> Arc<C> {
         self.inner.rl().client.clone()
@@ -64,36 +74,29 @@ impl<C: PDAsync> LeaderClient<C> {
     }
 }
 
-pub struct GetClient<C, R, F> {
+pub struct GetClient<C, Req, Resp, F> {
     need_update: bool,
     retry_count: usize,
-    client: Arc<RwLock<Arc<C>>>,
-    resp: Option<Result<R>>,
+    bundle: Arc<RwLock<Bundle<C>>>,
+    req: Req,
+    resp: Option<Result<Resp>>,
     func: F,
 }
 
-impl<C, R, F> GetClient<C, R, F>
+impl<C, Req, Resp, F> GetClient<C, Req, Resp, F>
     where C: PDAsync + Send + Sync + 'static,
-          R: Send + 'static,
-          F: FnMut(Arc<C>) -> PdFuture<R> + Send + 'static
+          Req: Clone + Send + 'static,
+          Resp: Send + 'static,
+          F: FnMut(Arc<C>, Req) -> PdFuture<Resp> + Send + 'static
 {
-    pub fn new(retry: usize, client: Arc<RwLock<Arc<C>>>, f: F) -> GetClient<C, R, F> {
-        GetClient {
-            need_update: false,
-            retry_count: retry,
-            client: client,
-            resp: None,
-            func: f,
-        }
-    }
-
-    fn get(self) -> PdFuture<GetClient<C, R, F>> {
+    fn get(self) -> PdFuture<GetClient<C, Req, Resp, F>> {
         debug!("GetLeader get remains: {}", self.retry_count);
 
         let get_read = GetClientRead { inner: Some(self) };
 
         let ctx = get_read.map(|(mut this, client)| {
-                let req = (this.func)(client);
+                let r = this.req.clone();
+                let req = (this.func)(client, r);
                 req.then(|resp| ok((this, resp)))
             })
             .flatten();
@@ -112,7 +115,7 @@ impl<C, R, F> GetClient<C, R, F>
             .boxed()
     }
 
-    fn check(self) -> PdFuture<(GetClient<C, R, F>, bool)> {
+    fn check(self) -> PdFuture<(GetClient<C, Req, Resp, F>, bool)> {
         if self.retry_count == 0 || self.resp.is_some() {
             ok((self, true)).boxed()
         } else {
@@ -121,11 +124,11 @@ impl<C, R, F> GetClient<C, R, F>
         }
     }
 
-    fn get_resp(self) -> Option<Result<R>> {
+    fn get_resp(self) -> Option<Result<Resp>> {
         self.resp
     }
 
-    pub fn retry(self) -> PdFuture<R> {
+    pub fn retry(self) -> PdFuture<Resp> {
         let this = self;
         loop_fn(this, |this| {
                 this.get()
@@ -149,18 +152,19 @@ impl<C, R, F> GetClient<C, R, F>
     }
 }
 
-struct GetClientRead<C, R, F> {
-    inner: Option<GetClient<C, R, F>>,
+struct GetClientRead<C, Req, Resp, F> {
+    inner: Option<GetClient<C, Req, Resp, F>>,
 }
 
-impl<C, R, F> Future for GetClientRead<C, R, F> {
-    type Item = (GetClient<C, R, F>, Arc<C>);
+// TODO: impl Stream instead.
+impl<C, Req, Resp, F> Future for GetClientRead<C, Req, Resp, F> {
+    type Item = (GetClient<C, Req, Resp, F>, Arc<C>);
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let inner = self.inner.take().expect("GetClientRead cannot poll twice");
-        let ret = match inner.client.try_read() {
-            Ok(client) => Ok(Async::Ready(client.clone())),
+        let ret = match inner.bundle.try_read() {
+            Ok(bundle) => Ok(Async::Ready(bundle.client.clone())),
             Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
             // TODO: handle `PoisonError`.
             Err(err) => panic!("{:?}", err),
@@ -170,30 +174,36 @@ impl<C, R, F> Future for GetClientRead<C, R, F> {
     }
 }
 
-pub struct Request<C, R, F> {
+// TODO: GetClientWrite
+
+pub struct Request<C, Req, Resp, F> {
     retry_count: usize,
     client: Arc<C>,
-    resp: Option<Result<R>>,
+    req: Req,
+    resp: Option<Result<Resp>>,
     func: F,
 }
 
-impl<C, R, F> Request<C, R, F>
+impl<C, Req, Resp, F> Request<C, Req, Resp, F>
     where C: PDAsync + Send + Sync + 'static,
-          R: Send + 'static,
-          F: FnMut(&C) -> PdFuture<R> + Send + 'static
+          Req: Clone + Send + 'static,
+          Resp: Send + 'static,
+          F: FnMut(&C, Req) -> PdFuture<Resp> + Send + 'static
 {
-    pub fn new(retry: usize, client: Arc<C>, f: F) -> Request<C, R, F> {
+    pub fn new(retry: usize, client: Arc<C>, req: Req, f: F) -> Request<C, Req, Resp, F> {
         Request {
             retry_count: retry,
             client: client,
+            req: req,
             resp: None,
             func: f,
         }
     }
 
-    fn send(mut self) -> PdFuture<Request<C, R, F>> {
+    fn send(mut self) -> PdFuture<Request<C, Req, Resp, F>> {
         debug!("request retry remains: {}", self.retry_count);
-        let req = (self.func)(self.client.as_ref());
+        let r = self.req.clone();
+        let req = (self.func)(self.client.as_ref(), r);
         req.then(|resp| {
                 match resp {
                     Ok(resp) => self.resp = Some(Ok(resp)),
@@ -207,16 +217,16 @@ impl<C, R, F> Request<C, R, F>
             .boxed()
     }
 
-    fn receive(self) -> PdFuture<(Request<C, R, F>, bool)> {
+    fn receive(self) -> PdFuture<(Request<C, Req, Resp, F>, bool)> {
         let done = self.retry_count == 0 || self.resp.is_some();
         ok((self, done)).boxed()
     }
 
-    fn get_resp(self) -> Option<Result<R>> {
+    fn get_resp(self) -> Option<Result<Resp>> {
         self.resp
     }
 
-    pub fn retry(self) -> PdFuture<R> {
+    pub fn retry(self) -> PdFuture<Resp> {
         let retry_req = self;
         loop_fn(retry_req, |retry_req| {
                 retry_req.send()

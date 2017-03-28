@@ -131,9 +131,41 @@ fn test_retry() {
     ];
 
     let se = Arc::new(Service::new(eps.clone()));
+    // FIXME: the magic number 3.
     let lc = Arc::new(Retry::new(3));
 
     let _server_a = MockServer::run("127.0.0.1:63080", se.clone(), Some(lc.clone()));
+
+    thread::sleep(Duration::from_secs(1));
+
+    let client = RpcClient::new(&eps.pop().unwrap()).unwrap();
+
+    for _ in 0..5 {
+        let region = AsyncPdClient::get_region_by_id(&client, 1);
+        let f = region.then(|res| {
+            assert_eq!(res.is_ok(), true);
+            future::ok::<(), ()>(())
+        });
+
+        Future::wait(f).unwrap();
+    }
+}
+
+#[test]
+fn test_retry_more() {
+    use pd::client::AsyncPdClient;
+    use futures::Future;
+    use futures::future;
+
+    let mut eps = vec![
+        "http://127.0.0.1:63081".to_owned(),
+    ];
+
+    let se = Arc::new(Service::new(eps.clone()));
+    // FIXME: the magic number 13.
+    let lc = Arc::new(Retry::new(13));
+
+    let _server_a = MockServer::run("127.0.0.1:63081", se.clone(), Some(lc.clone()));
 
     thread::sleep(Duration::from_secs(1));
 
