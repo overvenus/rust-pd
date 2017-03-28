@@ -179,7 +179,7 @@ fn do_request<F, R>(client: &RpcAsyncClient, f: F) -> Result<R>
         let r = {
             let inner = client.inner.read().unwrap();
             let timer = PD_SEND_MSG_HISTOGRAM.start_timer();
-            let r = Future::wait(f(inner.get_client()));
+            let r = Future::wait(f(&inner.get_client()));
             timer.observe_duration();
             r
         };
