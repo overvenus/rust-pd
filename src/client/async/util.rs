@@ -24,8 +24,6 @@ struct Bundle<C> {
 }
 
 pub struct LeaderClient<C> {
-    // TODO: remove `GetMembersResponse`.
-    members: GetMembersResponse,
     inner: Arc<RwLock<Bundle<C>>>,
 }
 
@@ -36,7 +34,6 @@ impl<C: PDAsync> LeaderClient<C> {
                 client: Arc::new(client),
                 members: members.clone(),
             })),
-            members: members,
         }
     }
 
@@ -57,12 +54,13 @@ impl<C: PDAsync> LeaderClient<C> {
         self.inner.rl().client.clone()
     }
 
-    pub fn get_members(&self) -> &GetMembersResponse {
-        &self.members
+    pub fn clone_members(&self) -> GetMembersResponse {
+        self.inner.rl().members.clone()
     }
 
-    pub fn set_members(&mut self, members: GetMembersResponse) {
-        self.members = members;
+    pub fn set_members(&self, members: GetMembersResponse) {
+        let mut inner = self.inner.wl();
+        inner.members = members;
     }
 }
 

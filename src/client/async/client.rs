@@ -13,7 +13,6 @@
 
 use std::fmt;
 use std::thread;
-use std::sync::RwLock;
 use std::sync::mpsc::channel as std_channel;
 
 use protobuf::RepeatedField;
@@ -39,7 +38,7 @@ use super::util::Request;
 // TODO: revoke pubs.
 pub struct RpcAsyncClient {
     pub cluster_id: u64,
-    pub inner: RwLock<LeaderClient<PDAsyncClient>>,
+    pub inner: LeaderClient<PDAsyncClient>,
     remote: Remote,
     _shutdown: Sender<()>,
 }
@@ -88,7 +87,7 @@ impl RpcAsyncClient {
 
         Ok(RpcAsyncClient {
             cluster_id: members.get_header().get_cluster_id(),
-            inner: RwLock::new(LeaderClient::new(client, members)),
+            inner: LeaderClient::new(client, members),
             remote: remote,
             _shutdown: shutdown_tx,
         })
@@ -111,8 +110,7 @@ impl RpcAsyncClient {
 
     // For tests
     pub fn get_leader(&self) -> Member {
-        let inner = self.inner.read().unwrap();
-        inner.get_members().get_leader().clone()
+        self.inner.clone_members().take_leader()
     }
 }
 
@@ -142,7 +140,7 @@ impl AsyncPdClient for RpcAsyncClient {
         req.set_header(self.header());
         req.set_region_id(region_id);
 
-        let client = self.inner.read().unwrap().clone_client();
+        let client = self.inner.clone_client();
         let retry_req = Request::new(10, client, move |client| {
             client.GetRegionByID(req.clone())
                 .map_err(Error::Grpc)
@@ -174,7 +172,7 @@ impl AsyncPdClient for RpcAsyncClient {
         req.set_down_peers(RepeatedField::from_vec(down_peers));
         req.set_pending_peers(RepeatedField::from_vec(pending_peers));
 
-        let client = self.inner.read().unwrap().clone_client();
+        let client = self.inner.clone_client();
         let retry_req = Request::new(10, client, move |client| {
             client.RegionHeartbeat(req.clone())
                 .map_err(Error::Grpc)
@@ -194,7 +192,7 @@ impl AsyncPdClient for RpcAsyncClient {
         req.set_header(self.header());
         req.set_region(region);
 
-        let client = self.inner.read().unwrap().clone_client();
+        let client = self.inner.clone_client();
         let retry_req = Request::new(10, client, move |client| {
             client.AskSplit(req.clone())
                 .map_err(Error::Grpc)
@@ -214,7 +212,7 @@ impl AsyncPdClient for RpcAsyncClient {
         req.set_header(self.header());
         req.set_stats(stats);
 
-        let client = self.inner.read().unwrap().clone_client();
+        let client = self.inner.clone_client();
         let retry_req = Request::new(10, client, move |client| {
             client.StoreHeartbeat(req.clone())
                 .map_err(Error::Grpc)
@@ -235,7 +233,7 @@ impl AsyncPdClient for RpcAsyncClient {
         req.set_left(left);
         req.set_right(right);
 
-        let client = self.inner.read().unwrap().clone_client();
+        let client = self.inner.clone_client();
         let retry_req = Request::new(10, client, move |client| {
             client.ReportSplit(req.clone())
                 .map_err(Error::Grpc)
