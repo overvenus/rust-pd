@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+
 /// box try will box error first, and then do the same thing as try!.
 #[macro_export]
 macro_rules! box_try {
@@ -37,3 +39,20 @@ macro_rules! box_err {
 
 mod panic_hook;
 pub use self::panic_hook::set_exit_hook;
+
+/// A handy shortcut to replace `RwLock` write/read().unwrap() pattern to
+/// shortcut wl and rl.
+pub trait HandyRwLock<T> {
+    fn wl(&self) -> RwLockWriteGuard<T>;
+    fn rl(&self) -> RwLockReadGuard<T>;
+}
+
+impl<T> HandyRwLock<T> for RwLock<T> {
+    fn wl(&self) -> RwLockWriteGuard<T> {
+        self.write().unwrap()
+    }
+
+    fn rl(&self) -> RwLockReadGuard<T> {
+        self.read().unwrap()
+    }
+}
