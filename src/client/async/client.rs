@@ -18,7 +18,7 @@ use std::sync::mpsc::channel as std_channel;
 
 use protobuf::RepeatedField;
 
-use futures::future::{self, loop_fn, Loop};
+use futures::future;
 use futures::Future;
 use futures::sync::oneshot::{channel, Sender};
 
@@ -157,25 +157,7 @@ impl AsyncPdClient for RpcAsyncClient {
                 .boxed()
         });
 
-        loop_fn(retry_req, |retry_req| {
-                retry_req.send()
-                    .and_then(|retry_req| retry_req.receive())
-                    .and_then(|(retry_req, done)| {
-                        if done {
-                            Ok(Loop::Break(retry_req))
-                        } else {
-                            Ok(Loop::Continue(retry_req))
-                        }
-                    })
-            })
-            .then(|req| {
-                match req.unwrap().get_resp() {
-                    Some(Ok(resp)) => future::ok(resp),
-                    Some(Err(err)) => future::err(err),
-                    None => future::err(box_err!("fail to request")),
-                }
-            })
-            .boxed()
+        retry_req.retry()
     }
 
     // Leader for a region will use this to heartbeat Pd.
@@ -203,25 +185,7 @@ impl AsyncPdClient for RpcAsyncClient {
                 .boxed()
         });
 
-        loop_fn(retry_req, |retry_req| {
-                retry_req.send()
-                    .and_then(|retry_req| retry_req.receive())
-                    .and_then(|(retry_req, done)| {
-                        if done {
-                            Ok(Loop::Break(retry_req))
-                        } else {
-                            Ok(Loop::Continue(retry_req))
-                        }
-                    })
-            })
-            .then(|req| {
-                match req.unwrap().get_resp() {
-                    Some(Ok(resp)) => future::ok(resp),
-                    Some(Err(err)) => future::err(err),
-                    None => future::err(box_err!("fail to request")),
-                }
-            })
-            .boxed()
+        retry_req.retry()
     }
 
     // Ask pd for split, pd will returns the new split region id.
@@ -241,25 +205,7 @@ impl AsyncPdClient for RpcAsyncClient {
                 .boxed()
         });
 
-        loop_fn(retry_req, |retry_req| {
-                retry_req.send()
-                    .and_then(|retry_req| retry_req.receive())
-                    .and_then(|(retry_req, done)| {
-                        if done {
-                            Ok(Loop::Break(retry_req))
-                        } else {
-                            Ok(Loop::Continue(retry_req))
-                        }
-                    })
-            })
-            .then(|req| {
-                match req.unwrap().get_resp() {
-                    Some(Ok(resp)) => future::ok(resp),
-                    Some(Err(err)) => future::err(err),
-                    None => future::err(box_err!("fail to request")),
-                }
-            })
-            .boxed()
+        retry_req.retry()
     }
 
     // Send store statistics regularly.
@@ -279,25 +225,7 @@ impl AsyncPdClient for RpcAsyncClient {
                 .boxed()
         });
 
-        loop_fn(retry_req, |retry_req| {
-                retry_req.send()
-                    .and_then(|retry_req| retry_req.receive())
-                    .and_then(|(retry_req, done)| {
-                        if done {
-                            Ok(Loop::Break(retry_req))
-                        } else {
-                            Ok(Loop::Continue(retry_req))
-                        }
-                    })
-            })
-            .then(|req| {
-                match req.unwrap().get_resp() {
-                    Some(Ok(resp)) => future::ok(resp),
-                    Some(Err(err)) => future::err(err),
-                    None => future::err(box_err!("fail to request")),
-                }
-            })
-            .boxed()
+        retry_req.retry()
     }
 
     // Report pd the split region.
@@ -318,25 +246,7 @@ impl AsyncPdClient for RpcAsyncClient {
                 .boxed()
         });
 
-        loop_fn(retry_req, |retry_req| {
-                retry_req.send()
-                    .and_then(|retry_req| retry_req.receive())
-                    .and_then(|(retry_req, done)| {
-                        if done {
-                            Ok(Loop::Break(retry_req))
-                        } else {
-                            Ok(Loop::Continue(retry_req))
-                        }
-                    })
-            })
-            .then(|req| {
-                match req.unwrap().get_resp() {
-                    Some(Ok(resp)) => future::ok(resp),
-                    Some(Err(err)) => future::err(err),
-                    None => future::err(box_err!("fail to request")),
-                }
-            })
-            .boxed()
+        retry_req.retry()
     }
 
     fn resolve(&self, future: Box<Future<Item = (), Error = ()> + Send + 'static>) {

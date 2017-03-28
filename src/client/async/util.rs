@@ -4,6 +4,7 @@ use std::sync::Arc;
 // use futures::Async;
 use futures::Future;
 use futures::future::ok;
+use futures::future::{self, loop_fn, Loop};
 
 use kvproto::pdpb::GetMembersResponse;
 use kvproto::pdpb_grpc::PDAsync;
@@ -86,7 +87,7 @@ impl<C, R, F> Request<C, R, F>
         }
     }
 
-    pub fn send(mut self) -> PdFuture<Request<C, R, F>> {
+    fn send(mut self) -> PdFuture<Request<C, R, F>> {
         debug!("request retry remains: {}", self.retry_count);
         let req = (self.func)(self.client.as_ref());
         req.then(|resp| {
@@ -102,12 +103,35 @@ impl<C, R, F> Request<C, R, F>
             .boxed()
     }
 
-    pub fn receive(self) -> PdFuture<(Request<C, R, F>, bool)> {
+    fn receive(self) -> PdFuture<(Request<C, R, F>, bool)> {
         let done = self.retry_count == 0 || self.resp.is_some();
         ok((self, done)).boxed()
     }
 
-    pub fn get_resp(self) -> Option<Result<R>> {
+    fn get_resp(self) -> Option<Result<R>> {
         self.resp
+    }
+
+    pub fn retry(self) -> PdFuture<R> {
+        let retry_req = self;
+        loop_fn(retry_req, |retry_req| {
+                retry_req.send()
+                    .and_then(|retry_req| retry_req.receive())
+                    .and_then(|(retry_req, done)| {
+                        if done {
+                            Ok(Loop::Break(retry_req))
+                        } else {
+                            Ok(Loop::Continue(retry_req))
+                        }
+                    })
+            })
+            .then(|req| {
+                match req.unwrap().get_resp() {
+                    Some(Ok(resp)) => future::ok(resp),
+                    Some(Err(err)) => future::err(err),
+                    None => future::err(box_err!("fail to request")),
+                }
+            })
+            .boxed()
     }
 }
