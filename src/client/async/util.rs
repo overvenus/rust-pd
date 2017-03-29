@@ -23,13 +23,13 @@ use super::super::Result;
 use super::super::Error;
 
 #[derive(Debug)]
-struct Bundle<C> {
-    client: Arc<C>,
-    members: GetMembersResponse,
+struct Bundle<C, M> {
+    client: C,
+    members: M,
 }
 
 pub struct LeaderClient {
-    inner: Arc<RwLock<Bundle<PDAsyncClient>>>,
+    inner: Arc<RwLock<Bundle<Arc<PDAsyncClient>, GetMembersResponse>>>,
 }
 
 impl LeaderClient {
@@ -47,7 +47,6 @@ impl LeaderClient {
               G: FnMut(Arc<PDAsyncClient>, Req) -> PdFuture<Resp> + Send + 'static
     {
         GetClient {
-            need_update: false,
             retry_count: retry,
             bundle: self.inner.clone(),
             req: req,
@@ -80,9 +79,8 @@ impl LeaderClient {
 }
 
 pub struct GetClient<Req, Resp, F> {
-    need_update: bool,
     retry_count: usize,
-    bundle: Arc<RwLock<Bundle<PDAsyncClient>>>,
+    bundle: Arc<RwLock<Bundle<Arc<PDAsyncClient>, GetMembersResponse>>>,
     req: Req,
     resp: Option<Result<Resp>>,
     func: F,
@@ -94,7 +92,7 @@ impl<Req, Resp, F> GetClient<Req, Resp, F>
           F: FnMut(Arc<PDAsyncClient>, Req) -> PdFuture<Resp> + Send + 'static
 {
     fn get(mut self) -> PdFuture<GetClient<Req, Resp, F>> {
-        debug!("GetLeader get remains: {}", self.retry_count);
+        debug!("GetClient get remains: {}", self.retry_count);
         self.retry_count -= 1;
 
         let get_read = GetClientRead { inner: Some(self) };
@@ -137,11 +135,11 @@ impl<Req, Resp, F> GetClient<Req, Resp, F>
         let members = self.bundle.rl().members.clone();
         match sync::try_connect_leader(&members) {
             Ok((client, members)) => {
-                // TODO: check if it is updated.
                 let mut bundle = self.bundle.wl();
-                let c: PDAsyncClient = client;
-                bundle.client = Arc::new(c);
-                bundle.members = members;
+                if members != bundle.members {
+                    bundle.client = Arc::new(client);
+                    bundle.members = members;
+                }
                 warn!("updating PD client done, spent {:?}", start.elapsed());
             }
 
@@ -276,7 +274,7 @@ impl<C, Req, Resp, F> Request<C, Req, Resp, F>
                 match req.unwrap().get_resp() {
                     Some(Ok(resp)) => future::ok(resp),
                     Some(Err(err)) => future::err(err),
-                    None => future::err(box_err!("fail to request")),
+                    None => future::err(box_err!("Request fail to request")),
                 }
             })
             .boxed()
