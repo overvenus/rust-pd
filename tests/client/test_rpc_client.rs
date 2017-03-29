@@ -15,15 +15,18 @@ use std::thread;
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::Future;
 use kvproto::metapb;
 
-use pd::{PdClient, RpcClient, validate_endpoints};
+use pd::{RpcClient, validate_endpoints};
 
 use super::mock::mocker::*;
 use super::mock::Server as MockServer;
 
 #[test]
 fn test_rpc_client() {
+    use pd::client::PdClient;
+
     let eps = "http://127.0.0.1:3079".to_owned();
 
     let se = Arc::new(Service::new(vec![eps.clone()]));
@@ -89,7 +92,9 @@ fn test_validate_endpoints() {
 }
 
 #[test]
-fn test_change_leader() {
+fn test_change_leader_sync() {
+    use pd::client::PdClient;
+
     let mut eps = vec![
         "http://127.0.0.1:43079".to_owned(),
         "http://127.0.0.1:53079".to_owned(),
@@ -121,17 +126,14 @@ fn test_change_leader() {
 }
 
 #[test]
-fn test_retry() {
+fn test_retry_async() {
     use pd::client::AsyncPdClient;
-    use futures::Future;
-    use futures::future;
 
     let mut eps = vec![
         "http://127.0.0.1:63080".to_owned(),
     ];
 
     let se = Arc::new(Service::new(eps.clone()));
-    // FIXME: the magic number 3.
     let lc = Arc::new(Retry::new(3));
 
     let _server_a = MockServer::run("127.0.0.1:63080", se.clone(), Some(lc.clone()));
@@ -141,52 +143,14 @@ fn test_retry() {
     let client = RpcClient::new(&eps.pop().unwrap()).unwrap();
 
     for _ in 0..5 {
-        let region = AsyncPdClient::get_region_by_id(&client, 1);
-        let f = region.then(|res| {
-            assert_eq!(res.is_ok(), true);
-            future::ok::<(), ()>(())
-        });
-
-        Future::wait(f).unwrap();
-    }
-}
-
-#[test]
-fn test_retry_more() {
-    use pd::client::AsyncPdClient;
-    use futures::Future;
-    use futures::future;
-
-    let mut eps = vec![
-        "http://127.0.0.1:63081".to_owned(),
-    ];
-
-    let se = Arc::new(Service::new(eps.clone()));
-    // FIXME: the magic number 13.
-    let lc = Arc::new(Retry::new(13));
-
-    let _server_a = MockServer::run("127.0.0.1:63081", se.clone(), Some(lc.clone()));
-
-    thread::sleep(Duration::from_secs(1));
-
-    let client = RpcClient::new(&eps.pop().unwrap()).unwrap();
-
-    for _ in 0..5 {
-        let region = AsyncPdClient::get_region_by_id(&client, 1);
-        let f = region.then(|res| {
-            assert_eq!(res.is_ok(), true);
-            future::ok::<(), ()>(())
-        });
-
-        Future::wait(f).unwrap();
+        let region = client.get_region_by_id(1);
+        Future::wait(region).unwrap();
     }
 }
 
 #[test]
 fn test_change_leader_async() {
     use pd::client::AsyncPdClient;
-    use futures::Future;
-    use futures::future;
 
     let mut eps = vec![
         "http://127.0.0.1:42979".to_owned(),
@@ -207,7 +171,7 @@ fn test_change_leader_async() {
     let leader = client.get_leader();
 
     for _ in 0..5 {
-        let region = AsyncPdClient::get_region_by_id(&client, 1);
+        let region = client.get_region_by_id(1);
         Future::wait(region).ok();
 
         let new = client.get_leader();
