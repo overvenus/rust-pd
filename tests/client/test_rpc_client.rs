@@ -181,3 +181,41 @@ fn test_retry_more() {
         Future::wait(f).unwrap();
     }
 }
+
+#[test]
+fn test_change_leader_async() {
+    use pd::client::AsyncPdClient;
+    use futures::Future;
+    use futures::future;
+
+    let mut eps = vec![
+        "http://127.0.0.1:42979".to_owned(),
+        "http://127.0.0.1:52979".to_owned(),
+        "http://127.0.0.1:62979".to_owned(),
+    ];
+
+    let se = Arc::new(Service::new(eps.clone()));
+    let lc = Arc::new(LeaderChange::new(eps.clone()));
+
+    let _server_a = MockServer::run("127.0.0.1:42979", se.clone(), Some(lc.clone()));
+    let _server_b = MockServer::run("127.0.0.1:52979", se.clone(), Some(lc.clone()));
+    let _server_c = MockServer::run("127.0.0.1:62979", se.clone(), Some(lc.clone()));
+
+    thread::sleep(Duration::from_secs(1));
+
+    let client = RpcClient::new(&eps.pop().unwrap()).unwrap();
+    let leader = client.get_leader();
+
+    for _ in 0..5 {
+        let region = AsyncPdClient::get_region_by_id(&client, 1);
+        Future::wait(region).ok();
+
+        let new = client.get_leader();
+        if new != leader {
+            return;
+        }
+        thread::sleep(LeaderChange::get_leader_interval());
+    }
+
+    panic!("failed, leader should changed");
+}
